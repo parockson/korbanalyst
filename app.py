@@ -20,10 +20,12 @@ if uploaded_files:
     st.divider()
     st.subheader("🛠️ Step 2: Individually Match Columns for Each File")
     
+    # Using a form to prevent expensive re-runs during selection
     with st.form("mapping_form"):
         file_mappings = {}
         
         for i, file in enumerate(uploaded_files):
+            # Read header to get columns
             header_df = pd.read_csv(file, nrows=0)
             cols = [c.strip() for c in header_df.columns]
             
@@ -83,41 +85,49 @@ if uploaded_files:
 
 # --- 3. Report Generation ---
 if 'master_df' in st.session_state:
-    # Use a copy so filtering doesn't overwrite the original session data
     full_df = st.session_state['master_df'].copy()
     
-    st.divider()
-    st.header("🔍 Filter & Reports")
-
-    # --- DATE SLIDER FILTER ---
-    min_date = full_df['Transaction_Date'].min().date()
-    max_date = full_df['Transaction_Date'].max().date()
+    # --- Sidebar Filtering ---
+    st.sidebar.header("🔍 Global Filters")
     
-    # Check if dates are valid
-    if pd.isnull(min_date) or pd.isnull(max_date):
-        st.warning("⚠️ Could not detect valid dates in the selected date column.")
+    # Calculate Date Bounds
+    min_date_val = full_df['Transaction_Date'].min().date()
+    max_date_val = full_df['Transaction_Date'].max().date()
+    
+    if pd.isnull(min_date_val) or pd.isnull(max_date_val):
+        st.warning("⚠️ Could not detect valid dates. Filtering disabled.")
         df = full_df
+        selected_range = (None, None)
     else:
-        selected_dates = st.slider(
-            "Select Date Range",
-            min_value=min_date,
-            max_value=max_date,
-            value=(min_date, max_date)
+        st.sidebar.subheader("Date Selection")
+        # Date Pickers
+        start_date = st.sidebar.date_input("Start Date", min_date_val, min_value=min_date_val, max_value=max_date_val)
+        end_date = st.sidebar.date_input("End Date", max_date_val, min_value=min_date_val, max_value=max_date_val)
+        
+        # Range Slider (Synced with pickers)
+        selected_range = st.sidebar.slider(
+            "Adjust Range Slider",
+            min_value=min_date_val,
+            max_value=max_date_val,
+            value=(start_date, end_date)
         )
         
-        # Apply the filter
+        # Apply filtering
         df = full_df[
-            (full_df['Transaction_Date'].dt.date >= selected_dates[0]) & 
-            (full_df['Transaction_Date'].dt.date <= selected_dates[1])
+            (full_df['Transaction_Date'].dt.date >= selected_range[0]) & 
+            (full_df['Transaction_Date'].dt.date <= selected_range[1])
         ]
+
+    st.divider()
+    st.header(f"📊 Reports: {selected_range[0]} to {selected_range[1]}")
 
     # Metrics Display
     m1, m2, m3 = st.columns(3)
-    m1.metric("Row Count", f"{len(df):,}")
-    m2.metric("Total Debit", f"GH₵ {df['debit_amt'].sum():,.2f}")
+    m1.metric("Transaction Count", f"{len(df):,}")
+    m2.metric("Total Debit Value", f"GH₵ {df['debit_amt'].sum():,.2f}")
     m3.metric("Total Net Margin", f"GH₵ {df['Net_Margin'].sum():,.2f}")
 
-    # REPORT 1: Master Pivot
+    # REPORT 1: Master Pivot (BizSegment & Category)
     st.subheader("1. Master Segment & Category Summary")
     pivot_df = df.groupby(['BizSegment', 'Category']).agg(
         row_count=('BizSegment', 'count'),
@@ -184,8 +194,10 @@ if 'master_df' in st.session_state:
         smb_zone_pivot.to_excel(writer, sheet_name='SMB_Zones', index=False)
         
     st.download_button(
-        label="📥 Download Filtered Reports as Excel",
+        label="📥 Download All Filtered Reports as Excel",
         data=buffer.getvalue(),
-        file_name="Korba_Business_Summary.xlsx",
+        file_name=f"Korba_Summary_{selected_range[0]}_to_{selected_range[1]}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+else:
+    st.warning("Waiting for data... Please upload and process CSV files above.")
