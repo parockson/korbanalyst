@@ -8,47 +8,64 @@ st.set_page_config(page_title="KorbAnalyst", page_icon="🚀", layout="wide")
 st.title("🚀 KorbAnalyst")
 st.markdown("### Transactional Intelligence Dashboard")
 
-# --- 1. File Upload Logic ---
-st.info("👇 Step 1: Upload your CSV files")
-uploaded_files = st.file_uploader(
-    "Choose CSV files (sept.csv, oct.csv, nov.csv, dec.csv, etc.)", 
-    type="csv", 
-    accept_multiple_files=True
-)
+# --- Refresh/Reset Logic ---
+if st.sidebar.button("🔄 Reset & Clear All Data"):
+    for key in st.session_state.keys():
+        del st.session_state[key]
+    st.rerun()
+
+# --- Helper Function for Wallet Cleaning ---
+def clean_wallet(series):
+    return series.astype(str).str.replace(" ", "", regex=False).str.replace("o", "0", case=False).str.slice(-9)
+
+# --- 1. File Upload ---
+st.info("👇 Step 1: Upload Transactional CSVs")
+uploaded_files = st.file_uploader("Choose Monthly CSV files", type="csv", accept_multiple_files=True)
+
+# --- Zone Sidebar ---
+st.sidebar.divider()
+st.sidebar.header("📍 Zone Analysis")
+enable_zones = st.sidebar.checkbox("Process Zone Data?")
+zone_file = None
+if enable_zones:
+    zone_file = st.sidebar.file_uploader("Upload Zone Mapping", type=["csv", "xlsx"])
 
 if uploaded_files:
     st.divider()
-    st.subheader("🛠️ Step 2: Individually Match Columns for Each File")
+    st.subheader("🛠️ Step 2: Column Mapping")
     
-    # Using a form to prevent expensive re-runs during selection
-    with st.form("mapping_form"):
+    with st.form("main_mapping_form"):
         file_mappings = {}
-        
         for i, file in enumerate(uploaded_files):
-            # Read header to get columns
             header_df = pd.read_csv(file, nrows=0)
             cols = [c.strip() for c in header_df.columns]
             
-            with st.expander(f"📄 Mapping for: {file.name}", expanded=(i == 0)):
+            with st.expander(f"📄 Mapping: {file.name}", expanded=(i == 0)):
                 c1, c2, c3 = st.columns(3)
                 with c1:
-                    seg = st.selectbox(f"BizSegment Col ({i})", cols, index=cols.index('Biz Segment') if 'Biz Segment' in cols else 0, key=f"seg_{i}")
-                    name = st.selectbox(f"Business Name Col ({i})", cols, index=cols.index('Name') if 'Name' in cols else 0, key=f"name_{i}")
-                    date_col = st.selectbox(f"Date/Time Col ({i})", cols, index=cols.index('Time Created') if 'Time Created' in cols else 0, key=f"date_{i}")
+                    seg = st.selectbox(f"BizSegment ({i})", cols, index=cols.index('Biz Segment') if 'Biz Segment' in cols else 0, key=f"seg_{i}")
+                    name = st.selectbox(f"Business Name ({i})", cols, index=cols.index('Name') if 'Name' in cols else 0, key=f"name_{i}")
+                    date_col = st.selectbox(f"Date/Time ({i})", cols, index=cols.index('Time Created') if 'Time Created' in cols else 0, key=f"date_{i}")
                 with c2:
-                    cat = st.selectbox(f"Category Col ({i})", cols, index=cols.index('Category') if 'Category' in cols else 0, key=f"cat_{i}")
-                    debt = st.selectbox(f"Debit Amt Col ({i})", cols, index=cols.index('Debit Amt') if 'Debit Amt' in cols else 0, key=f"debt_{i}")
+                    cat = st.selectbox(f"Category ({i})", cols, index=cols.index('Category') if 'Category' in cols else 0, key=f"cat_{i}")
+                    debt = st.selectbox(f"Debit Amt ({i})", cols, index=cols.index('Debit Amt') if 'Debit Amt' in cols else 0, key=f"debt_{i}")
                 with c3:
-                    gross = st.selectbox(f"Gross Margin Col ({i})", cols, index=cols.index('Gross Margin') if 'Gross Margin' in cols else 0, key=f"gross_{i}")
-                    net = st.selectbox(f"Net Margin Col ({i})", cols, index=cols.index('Net Margin') if 'Net Margin' in cols else 0, key=f"net_{i}")
-                    wallet = st.selectbox(f"Sender Wallet Col ({i})", cols, index=cols.index('Sender Wallet Number') if 'Sender Wallet Number' in cols else 0, key=f"wallet_{i}")
+                    gross = st.selectbox(f"Gross Margin ({i})", cols, index=cols.index('Gross Margin') if 'Gross Margin' in cols else 0, key=f"gross_{i}")
+                    net = st.selectbox(f"Net Margin ({i})", cols, index=cols.index('Net Margin') if 'Net Margin' in cols else 0, key=f"net_{i}")
+                    wallet = st.selectbox(f"Sender Wallet ({i})", cols, index=cols.index('Sender Wallet Number') if 'Sender Wallet Number' in cols else 0, key=f"wallet_{i}")
                 
-                file_mappings[file.name] = {
-                    'seg': seg, 'name': name, 'cat': cat, 'debt': debt, 
-                    'gross': gross, 'net': net, 'wallet': wallet, 'date': date_col
-                }
+                file_mappings[file.name] = {'seg': seg, 'name': name, 'cat': cat, 'debt': debt, 'gross': gross, 'net': net, 'wallet': wallet, 'date': date_col}
 
-        submit_btn = st.form_submit_button("🚀 Process & Generate Reports")
+        zone_map_cols = {}
+        if enable_zones and zone_file:
+            st.markdown("---")
+            z_df_prev = pd.read_csv(zone_file, nrows=0) if zone_file.name.endswith('.csv') else pd.read_excel(zone_file, nrows=0)
+            z_cols = z_df_prev.columns.tolist()
+            zc1, zc2 = st.columns(2)
+            zone_map_cols['wallet'] = zc1.selectbox("Zone Wallet Number Col", z_cols)
+            zone_map_cols['zone_name'] = zc2.selectbox("Zone Name Col", z_cols)
+
+        submit_btn = st.form_submit_button("🚀 Process & Generate All Reports")
 
     if submit_btn:
         final_dfs = []
@@ -56,148 +73,120 @@ if uploaded_files:
             file.seek(0)
             temp_df = pd.read_csv(file, low_memory=False)
             temp_df.columns = temp_df.columns.str.strip()
-            
             m = file_mappings[file.name]
             
-            # Map selected columns to standardized names
             std = temp_df[[m['seg'], m['cat'], m['name'], m['debt'], m['gross'], m['net'], m['wallet'], m['date']]].copy()
             std.columns = ['BizSegment', 'Category', 'Business_name', 'debit_amt', 'Gross_Margin', 'Net_Margin', 'sender_wallet_number', 'Transaction_Date']
             
-            # Data Cleaning
+            # Cleaning
             std['BizSegment'] = std['BizSegment'].astype(str).str.strip()
             std['Category'] = std['Category'].astype(str).str.strip()
-            
-            # Convert Date Column to Datetime
             std['Transaction_Date'] = pd.to_datetime(std['Transaction_Date'], errors='coerce')
-            
-            # Numeric conversion
             for col in ['debit_amt', 'Gross_Margin', 'Net_Margin']:
                 std[col] = pd.to_numeric(std[col], errors='coerce').fillna(0)
             
-            # Apply SMB Category correction logic
-            std.loc[(std['BizSegment'].str.upper() == 'SMB') & (std['Category'] == 'Disbursement 2'), 'Category'] = 'Data Purchase'
+            std['clean_wallet'] = clean_wallet(std['sender_wallet_number'])
             
+            # SMB Correction
+            std.loc[(std['BizSegment'].str.upper() == 'SMB') & (std['Category'] == 'Disbursement 2'), 'Category'] = 'Data Purchase'
             final_dfs.append(std)
 
-        # Merge and store in session state
-        st.session_state['master_df'] = pd.concat(final_dfs, ignore_index=True)
-        st.success("✅ Data Processed Successfully!")
+        master_df = pd.concat(final_dfs, ignore_index=True)
 
-# --- 3. Report Generation ---
+        if enable_zones and zone_file:
+            zone_file.seek(0)
+            z_raw = pd.read_csv(zone_file) if zone_file.name.endswith('.csv') else pd.read_excel(zone_file)
+            z_raw['clean_wallet'] = clean_wallet(z_raw[zone_map_cols['wallet']])
+            z_clean = z_raw[['clean_wallet', zone_map_cols['zone_name']]].drop_duplicates('clean_wallet')
+            z_clean.columns = ['clean_wallet', 'Zone_Name']
+            master_df = master_df.merge(z_clean, on='clean_wallet', how='left')
+            master_df['Zone_Name'] = master_df['Zone_Name'].fillna('Unmapped')
+
+        st.session_state['master_df'] = master_df
+        st.success("✅ Processing Complete!")
+
+# --- 3. Reports Display ---
 if 'master_df' in st.session_state:
-    full_df = st.session_state['master_df'].copy()
+    df = st.session_state['master_df'].copy()
     
-    # --- Sidebar Filtering ---
-    st.sidebar.header("🔍 Global Filters")
-    
-    # Calculate Date Bounds
-    min_date_val = full_df['Transaction_Date'].min().date()
-    max_date_val = full_df['Transaction_Date'].max().date()
-    
-    if pd.isnull(min_date_val) or pd.isnull(max_date_val):
-        st.warning("⚠️ Could not detect valid dates. Filtering disabled.")
-        df = full_df
-        selected_range = (None, None)
-    else:
-        st.sidebar.subheader("Date Selection")
-        # Date Pickers
-        start_date = st.sidebar.date_input("Start Date", min_date_val, min_value=min_date_val, max_value=max_date_val)
-        end_date = st.sidebar.date_input("End Date", max_date_val, min_value=min_date_val, max_value=max_date_val)
-        
-        # Range Slider (Synced with pickers)
-        selected_range = st.sidebar.slider(
-            "Adjust Range Slider",
-            min_value=min_date_val,
-            max_value=max_date_val,
-            value=(start_date, end_date)
-        )
-        
-        # Apply filtering
-        df = full_df[
-            (full_df['Transaction_Date'].dt.date >= selected_range[0]) & 
-            (full_df['Transaction_Date'].dt.date <= selected_range[1])
-        ]
+    st.sidebar.subheader("Filter Dates")
+    min_date = df['Transaction_Date'].min().date()
+    max_date = df['Transaction_Date'].max().date()
+    start_d = st.sidebar.date_input("Start", min_date)
+    end_d = st.sidebar.date_input("End", max_date)
+    df = df[(df['Transaction_Date'].dt.date >= start_d) & (df['Transaction_Date'].dt.date <= end_d)]
 
-    st.divider()
-    st.header(f"📊 Reports: {selected_range[0]} to {selected_range[1]}")
+    st.header(f"📊 Dashboard: {start_d} to {end_d}")
 
-    # Metrics Display
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Transaction Count", f"{len(df):,}")
-    m2.metric("Total Debit Value", f"GH₵ {df['debit_amt'].sum():,.2f}")
-    m3.metric("Total Net Margin", f"GH₵ {df['Net_Margin'].sum():,.2f}")
-
-    # REPORT 1: Master Pivot (BizSegment & Category)
+    # 1. MASTER SUMMARY
     st.subheader("1. Master Segment & Category Summary")
-    pivot_df = df.groupby(['BizSegment', 'Category']).agg(
-        row_count=('BizSegment', 'count'),
-        sum_debit_amt=('debit_amt', 'sum'),
-        sum_gross_margin=('Gross_Margin', 'sum'),
-        sum_net_margin=('Net_Margin', 'sum')
+    master_pivot = df.groupby(['BizSegment', 'Category']).agg(
+        volume=('BizSegment', 'count'),
+        value=('debit_amt', 'sum'),
+        gross=('Gross_Margin', 'sum'),
+        net=('Net_Margin', 'sum')
     ).reset_index()
-    st.dataframe(pivot_df, use_container_width=True)
+    st.dataframe(master_pivot, width='stretch')
 
-    # REPORT 2: Corporate Pivot
-    st.subheader("2. Corporate Segment (by Category & Business Name)")
-    corp_df = df[df['BizSegment'].str.lower() == 'corporate']
-    corporate_pivot = corp_df.groupby(['Category', 'Business_name']).agg(
-        row_count=('Business_name', 'count'),
-        sum_debit_amt=('debit_amt', 'sum'),
-        sum_gross_margin=('Gross_Margin', 'sum'),
-        sum_net_margin=('Net_Margin', 'sum')
-    ).reset_index().sort_values(by='sum_debit_amt', ascending=False)
-    st.dataframe(corporate_pivot, use_container_width=True)
+    # 2. CORPORATE
+    st.subheader("2. Corporate Segment Performance")
+    corp_df = df[df['BizSegment'].str.contains('corporate', case=False, na=False)]
+    if not corp_df.empty:
+        corp_pivot = corp_df.groupby(['Category', 'Business_name']).agg(volume=('Business_name', 'count'), value=('debit_amt', 'sum')).reset_index()
+        st.dataframe(corp_pivot, width='stretch')
+    else:
+        st.warning("⚠️ No Corporate data found. Check 'Master Summary' above to see how segments are named.")
 
-    # REPORT 3: Retail Pivot
-    st.subheader("3. Retail Segment (by Category)")
-    retail_df = df[df['BizSegment'].str.lower() == 'retail']
-    retail_pivot = retail_df.groupby(['Category']).agg(
-        row_count=('Category', 'count'),
-        sum_debit_amt=('debit_amt', 'sum'),
-        sum_gross_margin=('Gross_Margin', 'sum'),
-        sum_net_margin=('Net_Margin', 'sum')
-    ).reset_index().sort_values(by='sum_debit_amt', ascending=False)
-    st.dataframe(retail_pivot, use_container_width=True)
+    # 3. RETAIL
+    st.subheader("3. Retail Segment Summary")
+    retail_df = df[df['BizSegment'].str.contains('retail', case=False, na=False)]
+    if not retail_df.empty:
+        retail_pivot = retail_df.groupby(['Category']).agg(
+            volume=('Category', 'count'), 
+            value=('debit_amt', 'sum'), 
+            net_margin=('Net_Margin', 'sum')
+        ).reset_index().sort_values(by='value', ascending=False)
+        st.dataframe(retail_pivot, width='stretch')
+    else:
+        st.warning("⚠️ No Retail data found. Check 'Master Summary' above to see how segments are named.")
 
-    # REPORT 4 & 5: SMB Reports
-    smb_df = df[df['BizSegment'].str.upper() == 'SMB']
-    
-    col_a, col_b = st.columns(2)
-    with col_a:
-        st.subheader("4. SMB by Category")
-        smb_pivot = smb_df.groupby(['Category']).agg(
-            row_count=('Category', 'count'),
-            sum_debit_amt=('debit_amt', 'sum'),
-            sum_gross_margin=('Gross_Margin', 'sum'),
-            sum_net_margin=('Net_Margin', 'sum')
-        ).reset_index().sort_values(by='sum_debit_amt', ascending=False)
-        st.dataframe(smb_pivot, use_container_width=True)
+    # 4. SMB by Category
+    st.subheader("4. SMB by Category")
+    smb_df = df[df['BizSegment'].str.contains('smb', case=False, na=False)]
+    if not smb_df.empty:
+        smb_cat_pivot = smb_df.groupby(['Category']).agg(volume=('Category', 'count'), value=('debit_amt', 'sum')).reset_index().sort_values(by='value', ascending=False)
+        st.dataframe(smb_cat_pivot, width='stretch')
+    else:
+        st.warning("⚠️ No SMB data found. Check 'Master Summary' above to see how segments are named.")
 
-    with col_b:
-        st.subheader("5. SMB Zones (by Wallet Number)")
-        smb_zone_pivot = smb_df.groupby(['sender_wallet_number']).agg(
-            row_count=('sender_wallet_number', 'count'),
-            sum_debit_amt=('debit_amt', 'sum'),
-            sum_gross_margin=('Gross_Margin', 'sum'),
-            sum_net_margin=('Net_Margin', 'sum')
-        ).reset_index().sort_values(by='sum_debit_amt', ascending=False)
-        st.dataframe(smb_zone_pivot, use_container_width=True)
+    # 5. SMB by Wallet Number
+    st.subheader("5. SMB by Wallet Number")
+    if not smb_df.empty:
+        smb_wallet_pivot = smb_df.groupby(['sender_wallet_number']).agg(volume=('sender_wallet_number', 'count'), value=('debit_amt', 'sum')).reset_index().sort_values(by='value', ascending=False)
+        st.dataframe(smb_wallet_pivot, width='stretch')
 
-    # --- 4. Export to Single Excel ---
-    st.divider()
+    # 6. SMB BY ZONE (Conditional)
+    if 'Zone_Name' in df.columns:
+        st.subheader("6. 📍 SMB Zone Performance")
+        zone_report = smb_df.groupby('Zone_Name').agg(
+            agent_count=('sender_wallet_number', 'nunique'),
+            volume=('sender_wallet_number', 'count'),
+            value=('debit_amt', 'sum'),
+            gross_rev=('Gross_Margin', 'sum'),
+            net_rev=('Net_Margin', 'sum')
+        ).reset_index().sort_values(by='value', ascending=False)
+        st.dataframe(zone_report, width='stretch')
+
+    # Export
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-        pivot_df.to_excel(writer, sheet_name='All_Segments', index=False)
-        corporate_pivot.to_excel(writer, sheet_name='Corporate', index=False)
-        retail_pivot.to_excel(writer, sheet_name='Retail', index=False)
-        smb_pivot.to_excel(writer, sheet_name='SMB_Category', index=False)
-        smb_zone_pivot.to_excel(writer, sheet_name='SMB_Zones', index=False)
-        
-    st.download_button(
-        label="📥 Download All Filtered Reports as Excel",
-        data=buffer.getvalue(),
-        file_name=f"Korba_Summary_{selected_range[0]}_to_{selected_range[1]}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-else:
-    st.warning("Waiting for data... Please upload and process CSV files above.")
+        master_pivot.to_excel(writer, sheet_name='Master', index=False)
+        if not corp_df.empty: corp_pivot.to_excel(writer, sheet_name='Corporate', index=False)
+        if not retail_df.empty: retail_pivot.to_excel(writer, sheet_name='Retail', index=False)
+        if not smb_df.empty:
+            smb_cat_pivot.to_excel(writer, sheet_name='SMB_Category', index=False)
+            smb_wallet_pivot.to_excel(writer, sheet_name='SMB_By_Wallet', index=False)
+        if 'Zone_Name' in df.columns: 
+            zone_report.to_excel(writer, sheet_name='Zones', index=False)
+            
+    st.download_button("📥 Download Full Excel Report", data=buffer.getvalue(), file_name="Korba_Analysis_Final.xlsx")
