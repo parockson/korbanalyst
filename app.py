@@ -20,12 +20,10 @@ if uploaded_files:
     st.divider()
     st.subheader("🛠️ Step 2: Individually Match Columns for Each File")
     
-    # Using a form to prevent expensive re-runs during selection
     with st.form("mapping_form"):
         file_mappings = {}
         
         for i, file in enumerate(uploaded_files):
-            # Read header to get columns
             header_df = pd.read_csv(file, nrows=0)
             cols = [c.strip() for c in header_df.columns]
             
@@ -34,6 +32,7 @@ if uploaded_files:
                 with c1:
                     seg = st.selectbox(f"BizSegment Col ({i})", cols, index=cols.index('Biz Segment') if 'Biz Segment' in cols else 0, key=f"seg_{i}")
                     name = st.selectbox(f"Business Name Col ({i})", cols, index=cols.index('Name') if 'Name' in cols else 0, key=f"name_{i}")
+                    date_col = st.selectbox(f"Date/Time Col ({i})", cols, index=cols.index('Time Created') if 'Time Created' in cols else 0, key=f"date_{i}")
                 with c2:
                     cat = st.selectbox(f"Category Col ({i})", cols, index=cols.index('Category') if 'Category' in cols else 0, key=f"cat_{i}")
                     debt = st.selectbox(f"Debit Amt Col ({i})", cols, index=cols.index('Debit Amt') if 'Debit Amt' in cols else 0, key=f"debt_{i}")
@@ -44,7 +43,7 @@ if uploaded_files:
                 
                 file_mappings[file.name] = {
                     'seg': seg, 'name': name, 'cat': cat, 'debt': debt, 
-                    'gross': gross, 'net': net, 'wallet': wallet
+                    'gross': gross, 'net': net, 'wallet': wallet, 'date': date_col
                 }
 
         submit_btn = st.form_submit_button("🚀 Process & Generate Reports")
@@ -59,12 +58,15 @@ if uploaded_files:
             m = file_mappings[file.name]
             
             # Map selected columns to standardized names
-            std = temp_df[[m['seg'], m['cat'], m['name'], m['debt'], m['gross'], m['net'], m['wallet']]].copy()
-            std.columns = ['BizSegment', 'Category', 'Business_name', 'debit_amt', 'Gross_Margin', 'Net_Margin', 'sender_wallet_number']
+            std = temp_df[[m['seg'], m['cat'], m['name'], m['debt'], m['gross'], m['net'], m['wallet'], m['date']]].copy()
+            std.columns = ['BizSegment', 'Category', 'Business_name', 'debit_amt', 'Gross_Margin', 'Net_Margin', 'sender_wallet_number', 'Transaction_Date']
             
             # Data Cleaning
             std['BizSegment'] = std['BizSegment'].astype(str).str.strip()
             std['Category'] = std['Category'].astype(str).str.strip()
+            
+            # Convert Date Column to Datetime
+            std['Transaction_Date'] = pd.to_datetime(std['Transaction_Date'], errors='coerce')
             
             # Numeric conversion
             for col in ['debit_amt', 'Gross_Margin', 'Net_Margin']:
@@ -81,12 +83,41 @@ if uploaded_files:
 
 # --- 3. Report Generation ---
 if 'master_df' in st.session_state:
-    df = st.session_state['master_df']
+    # Use a copy so filtering doesn't overwrite the original session data
+    full_df = st.session_state['master_df'].copy()
     
     st.divider()
-    st.header("📊 Generated Reports")
+    st.header("🔍 Filter & Reports")
 
-    # REPORT 1: Master Pivot (BizSegment & Category)
+    # --- DATE SLIDER FILTER ---
+    min_date = full_df['Transaction_Date'].min().date()
+    max_date = full_df['Transaction_Date'].max().date()
+    
+    # Check if dates are valid
+    if pd.isnull(min_date) or pd.isnull(max_date):
+        st.warning("⚠️ Could not detect valid dates in the selected date column.")
+        df = full_df
+    else:
+        selected_dates = st.slider(
+            "Select Date Range",
+            min_value=min_date,
+            max_value=max_date,
+            value=(min_date, max_date)
+        )
+        
+        # Apply the filter
+        df = full_df[
+            (full_df['Transaction_Date'].dt.date >= selected_dates[0]) & 
+            (full_df['Transaction_Date'].dt.date <= selected_dates[1])
+        ]
+
+    # Metrics Display
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Row Count", f"{len(df):,}")
+    m2.metric("Total Debit", f"GH₵ {df['debit_amt'].sum():,.2f}")
+    m3.metric("Total Net Margin", f"GH₵ {df['Net_Margin'].sum():,.2f}")
+
+    # REPORT 1: Master Pivot
     st.subheader("1. Master Segment & Category Summary")
     pivot_df = df.groupby(['BizSegment', 'Category']).agg(
         row_count=('BizSegment', 'count'),
@@ -130,7 +161,7 @@ if 'master_df' in st.session_state:
             sum_gross_margin=('Gross_Margin', 'sum'),
             sum_net_margin=('Net_Margin', 'sum')
         ).reset_index().sort_values(by='sum_debit_amt', ascending=False)
-        st.dataframe(smb_pivot)
+        st.dataframe(smb_pivot, use_container_width=True)
 
     with col_b:
         st.subheader("5. SMB Zones (by Wallet Number)")
@@ -140,7 +171,7 @@ if 'master_df' in st.session_state:
             sum_gross_margin=('Gross_Margin', 'sum'),
             sum_net_margin=('Net_Margin', 'sum')
         ).reset_index().sort_values(by='sum_debit_amt', ascending=False)
-        st.dataframe(smb_zone_pivot)
+        st.dataframe(smb_zone_pivot, use_container_width=True)
 
     # --- 4. Export to Single Excel ---
     st.divider()
@@ -153,7 +184,7 @@ if 'master_df' in st.session_state:
         smb_zone_pivot.to_excel(writer, sheet_name='SMB_Zones', index=False)
         
     st.download_button(
-        label="📥 Download All Reports as Excel",
+        label="📥 Download Filtered Reports as Excel",
         data=buffer.getvalue(),
         file_name="Korba_Business_Summary.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
